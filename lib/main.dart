@@ -1,7 +1,11 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const PatsynMusic());
 }
 
@@ -12,7 +16,6 @@ class PatsynMusic extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
       home: const MusicHome(),
     );
   }
@@ -26,103 +29,76 @@ class MusicHome extends StatefulWidget {
 }
 
 class _MusicHomeState extends State<MusicHome> {
-  final OnAudioQuery audioQuery = OnAudioQuery();
   final AudioPlayer player = AudioPlayer();
 
-  List<SongModel> songs = [];
-  int currentIndex = -1;
-  bool isPlaying = false;
+  List<FileSystemEntity> songs = [];
+  bool loading = true;
 
   @override
   void initState() {
     super.initState();
-    requestPermission();
+    initApp();
   }
 
-  void requestPermission() async {
+  Future<void> initApp() async {
     await Permission.storage.request();
     await Permission.audio.request();
-
-    songs = await audioQuery.querySongs();
-
-    setState(() {});
+    loadSongs();
   }
 
-  Future<void> playSong(int index) async {
-    await player.setFilePath(songs[index].data);
-    player.play();
+  void loadSongs() {
+    try {
+      Directory dir = Directory('/storage/emulated/0/');
 
-    setState(() {
-      currentIndex = index;
-      isPlaying = true;
-    });
+      List<FileSystemEntity> files = dir
+          .listSync(recursive: true)
+          .where((file) => file.path.endsWith('.mp3'))
+          .toList();
+
+      setState(() {
+        songs = files;
+        loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        loading = false;
+      });
+    }
   }
 
-  Future<void> pauseSong() async {
-    await player.pause();
-
-    setState(() {
-      isPlaying = false;
-    });
-  }
-
-  Future<void> resumeSong() async {
-    await player.play();
-
-    setState(() {
-      isPlaying = true;
-    });
+  Future<void> playSong(String path) async {
+    await player.play(DeviceFileSource(path));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Patsynmusic"),
-        centerTitle: true,
+        title: const Text('PatsynMusic'),
       ),
-      body: songs.isEmpty
+      body: loading
           ? const Center(
-              child: Text(
-                "No Music Found",
-                style: TextStyle(fontSize: 20),
-              ),
+              child: CircularProgressIndicator(),
             )
-          : ListView.builder(
-              itemCount: songs.length,
-              itemBuilder: (context, index) {
-                return Card(
-                  child: ListTile(
-                    leading: const Icon(Icons.music_note),
-                    title: Text(
-                      songs[index].title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      songs[index].artist ?? "Unknown Artist",
-                      maxLines: 1,
-                    ),
-                    trailing: IconButton(
-                      icon: Icon(
-                        currentIndex == index && isPlaying
-                            ? Icons.pause
-                            : Icons.play_arrow,
-                      ),
-                      onPressed: () {
-                        if (currentIndex == index && isPlaying) {
-                          pauseSong();
-                        } else if (currentIndex == index && !isPlaying) {
-                          resumeSong();
-                        } else {
-                          playSong(index);
-                        }
+          : songs.isEmpty
+              ? const Center(
+                  child: Text('No MP3 files found'),
+                )
+              : ListView.builder(
+                  itemCount: songs.length,
+                  itemBuilder: (context, index) {
+                    String path = songs[index].path;
+                    String name = path.split('/').last;
+
+                    return ListTile(
+                      leading: const Icon(Icons.music_note),
+                      title: Text(name),
+                      onTap: () {
+                        playSong(path);
                       },
-                    ),
-                  ),
-                );
-              },
-            ),
+                    );
+                  },
+                ),
     );
   }
 }
