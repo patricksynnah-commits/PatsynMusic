@@ -5,7 +5,6 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
   runApp(const PatsynMusic());
 }
 
@@ -16,58 +15,65 @@ class PatsynMusic extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      home: const MusicHome(),
+      theme: ThemeData.dark(),
+      home: const FileBrowserScreen(),
     );
   }
 }
 
-class MusicHome extends StatefulWidget {
-  const MusicHome({super.key});
+class FileBrowserScreen extends StatefulWidget {
+  const FileBrowserScreen({super.key});
 
   @override
-  State<MusicHome> createState() => _MusicHomeState();
+  State<FileBrowserScreen> createState() => _FileBrowserScreenState();
 }
 
-class _MusicHomeState extends State<MusicHome> {
+class _FileBrowserScreenState extends State<FileBrowserScreen> {
   final AudioPlayer player = AudioPlayer();
 
-  List<FileSystemEntity> songs = [];
-  bool loading = true;
+  Directory currentDir = Directory('/storage/emulated/0/');
+  List<FileSystemEntity> items = [];
 
   @override
   void initState() {
     super.initState();
-    initApp();
+    requestPermission();
   }
 
-  Future<void> initApp() async {
+  Future<void> requestPermission() async {
     await Permission.storage.request();
     await Permission.audio.request();
-    loadSongs();
+    loadFiles(currentDir);
   }
 
-  void loadSongs() {
+  void loadFiles(Directory dir) {
     try {
-      Directory dir = Directory('/storage/emulated/0/');
+      List<FileSystemEntity> temp = dir.listSync();
 
-      List<FileSystemEntity> files = dir
-          .listSync(recursive: true)
-          .where((file) => file.path.endsWith('.mp3'))
-          .toList();
+      temp.sort((a, b) {
+        return a.path.toLowerCase().compareTo(
+              b.path.toLowerCase(),
+            );
+      });
 
       setState(() {
-        songs = files;
-        loading = false;
+        currentDir = dir;
+        items = temp;
       });
     } catch (e) {
-      setState(() {
-        loading = false;
-      });
+      debugPrint(e.toString());
     }
   }
 
   Future<void> playSong(String path) async {
+    await player.stop();
     await player.play(DeviceFileSource(path));
+  }
+
+  bool isMusicFile(String path) {
+    return path.toLowerCase().endsWith('.mp3') ||
+        path.toLowerCase().endsWith('.wav') ||
+        path.toLowerCase().endsWith('.m4a');
   }
 
   @override
@@ -75,30 +81,71 @@ class _MusicHomeState extends State<MusicHome> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('PatsynMusic'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.home),
+            onPressed: () {
+              loadFiles(Directory('/storage/emulated/0/'));
+            },
+          ),
+        ],
       ),
-      body: loading
-          ? const Center(
-              child: CircularProgressIndicator(),
-            )
-          : songs.isEmpty
-              ? const Center(
-                  child: Text('No MP3 files found'),
-                )
-              : ListView.builder(
-                  itemCount: songs.length,
-                  itemBuilder: (context, index) {
-                    String path = songs[index].path;
-                    String name = path.split('/').last;
+      body: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            color: Colors.black26,
+            child: Text(
+              currentDir.path,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              itemCount: items.length,
+              itemBuilder: (context, index) {
+                FileSystemEntity item = items[index];
+                String name = item.path.split('/').last;
 
-                    return ListTile(
-                      leading: const Icon(Icons.music_note),
-                      title: Text(name),
-                      onTap: () {
-                        playSong(path);
-                      },
-                    );
-                  },
-                ),
+                if (item is Directory) {
+                  return ListTile(
+                    leading: const Icon(
+                      Icons.folder,
+                      color: Colors.yellow,
+                    ),
+                    title: Text(name),
+                    onTap: () {
+                      loadFiles(item);
+                    },
+                  );
+                } else if (item is File && isMusicFile(item.path)) {
+                  return ListTile(
+                    leading: const Icon(
+                      Icons.music_note,
+                      color: Colors.green,
+                    ),
+                    title: Text(name),
+                    onTap: () {
+                      playSong(item.path);
+                    },
+                  );
+                } else {
+                  return const SizedBox.shrink();
+                }
+              },
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        child: const Icon(Icons.arrow_back),
+        onPressed: () {
+          if (currentDir.path != '/storage/emulated/0/') {
+            loadFiles(currentDir.parent);
+          }
+        },
+      ),
     );
   }
 }
