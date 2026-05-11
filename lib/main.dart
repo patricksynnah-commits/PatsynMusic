@@ -5,6 +5,7 @@ import 'package:audioplayers/audioplayers.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const PatsynMusic());
 }
 
@@ -15,137 +16,413 @@ class PatsynMusic extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      title: 'PatsynMusic',
       theme: ThemeData.dark(),
-      home: const FileBrowserScreen(),
+      home: const MusicPlayerScreen(),
     );
   }
 }
 
-class FileBrowserScreen extends StatefulWidget {
-  const FileBrowserScreen({super.key});
+class MusicPlayerScreen extends StatefulWidget {
+  const MusicPlayerScreen({super.key});
 
   @override
-  State<FileBrowserScreen> createState() => _FileBrowserScreenState();
+  State<MusicPlayerScreen> createState() =>
+      _MusicPlayerScreenState();
 }
 
-class _FileBrowserScreenState extends State<FileBrowserScreen> {
+class _MusicPlayerScreenState
+    extends State<MusicPlayerScreen> {
   final AudioPlayer player = AudioPlayer();
 
-  Directory currentDir = Directory('/storage/emulated/0/');
-  List<FileSystemEntity> items = [];
+  List<File> songs = [];
+
+  int currentIndex = -1;
+
+  bool isPlaying = false;
+
+  bool loading = true;
+
+  Duration duration = Duration.zero;
+  Duration position = Duration.zero;
 
   @override
   void initState() {
     super.initState();
-    requestPermission();
+
+    initializePlayer();
+    requestPermissionsAndScan();
   }
 
-  Future<void> requestPermission() async {
+  void initializePlayer() {
+    player.onDurationChanged.listen((d) {
+      setState(() {
+        duration = d;
+      });
+    });
+
+    player.onPositionChanged.listen((p) {
+      setState(() {
+        position = p;
+      });
+    });
+
+    player.onPlayerComplete.listen((event) {
+      playNext();
+    });
+  }
+
+  Future<void> requestPermissionsAndScan() async {
     await Permission.storage.request();
     await Permission.audio.request();
-    loadFiles(currentDir);
+
+    await scanSongs();
   }
 
-  void loadFiles(Directory dir) {
-    try {
-      List<FileSystemEntity> temp = dir.listSync();
+  Future<void> scanSongs() async {
+    List<File> foundSongs = [];
 
-      temp.sort((a, b) {
-        return a.path.toLowerCase().compareTo(
-              b.path.toLowerCase(),
-            );
-      });
+    Directory root = Directory('/storage/emulated/0/');
+
+    void scanDirectory(Directory dir) {
+      try {
+        List<FileSystemEntity> files =
+            dir.listSync();
+
+        for (var file in files) {
+          if (file is Directory) {
+            scanDirectory(file);
+          } else if (file is File) {
+            String path =
+                file.path.toLowerCase();
+
+            if (path.endsWith('.mp3') ||
+                path.endsWith('.wav') ||
+                path.endsWith('.m4a')) {
+              foundSongs.add(file);
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    scanDirectory(root);
+
+    foundSongs.sort(
+      (a, b) =>
+          a.path
+              .toLowerCase()
+              .compareTo(
+                b.path.toLowerCase(),
+              ),
+    );
+
+    setState(() {
+      songs = foundSongs;
+      loading = false;
+    });
+  }
+
+  Future<void> playSong(int index) async {
+    try {
+      currentIndex = index;
+
+      await player.stop();
+
+      await player.play(
+        DeviceFileSource(
+          songs[index].path,
+        ),
+      );
 
       setState(() {
-        currentDir = dir;
-        items = temp;
+        isPlaying = true;
       });
     } catch (e) {
       debugPrint(e.toString());
     }
   }
 
-  Future<void> playSong(String path) async {
-    await player.stop();
-    await player.play(DeviceFileSource(path));
+  Future<void> pauseSong() async {
+    await player.pause();
+
+    setState(() {
+      isPlaying = false;
+    });
   }
 
-  bool isMusicFile(String path) {
-    return path.toLowerCase().endsWith('.mp3') ||
-        path.toLowerCase().endsWith('.wav') ||
-        path.toLowerCase().endsWith('.m4a');
+  Future<void> resumeSong() async {
+    await player.resume();
+
+    setState(() {
+      isPlaying = true;
+    });
+  }
+
+  Future<void> playNext() async {
+    if (songs.isEmpty) return;
+
+    int nextIndex = currentIndex + 1;
+
+    if (nextIndex >= songs.length) {
+      nextIndex = 0;
+    }
+
+    await playSong(nextIndex);
+  }
+
+  Future<void> playPrevious() async {
+    if (songs.isEmpty) return;
+
+    int previousIndex =
+        currentIndex - 1;
+
+    if (previousIndex < 0) {
+      previousIndex =
+          songs.length - 1;
+    }
+
+    await playSong(previousIndex);
+  }
+
+  String formatTime(Duration d) {
+    String twoDigits(int n) =>
+        n.toString().padLeft(2, '0');
+
+    return "${twoDigits(d.inMinutes)}:"
+        "${twoDigits(d.inSeconds % 60)}";
+  }
+
+  @override
+  void dispose() {
+    player.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    String currentSongName =
+        currentIndex >= 0
+            ? songs[currentIndex]
+                .path
+                .split('/')
+                .last
+            : "No song playing";
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('PatsynMusic'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.home),
-            onPressed: () {
-              loadFiles(Directory('/storage/emulated/0/'));
-            },
-          ),
-        ],
+        title: const Text(
+          "PatsynMusic",
+        ),
+        centerTitle: true,
       ),
-      body: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            color: Colors.black26,
-            child: Text(
-              currentDir.path,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              itemCount: items.length,
-              itemBuilder: (context, index) {
-                FileSystemEntity item = items[index];
-                String name = item.path.split('/').last;
 
-                if (item is Directory) {
-                  return ListTile(
-                    leading: const Icon(
-                      Icons.folder,
-                      color: Colors.yellow,
+      body: loading
+          ? const Center(
+              child:
+                  CircularProgressIndicator(),
+            )
+          : Column(
+              children: [
+                const SizedBox(height: 20),
+
+                const Icon(
+                  Icons.album,
+                  size: 140,
+                  color: Colors.green,
+                ),
+
+                const SizedBox(height: 20),
+
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(
+                    horizontal: 20,
+                  ),
+                  child: Text(
+                    currentSongName,
+                    textAlign:
+                        TextAlign.center,
+                    maxLines: 2,
+                    overflow:
+                        TextOverflow
+                            .ellipsis,
+                    style:
+                        const TextStyle(
+                      fontSize: 20,
+                      fontWeight:
+                          FontWeight.bold,
                     ),
-                    title: Text(name),
-                    onTap: () {
-                      loadFiles(item);
-                    },
-                  );
-                } else if (item is File && isMusicFile(item.path)) {
-                  return ListTile(
-                    leading: const Icon(
-                      Icons.music_note,
-                      color: Colors.green,
+                  ),
+                ),
+
+                Slider(
+                  min: 0,
+                  max: duration
+                              .inSeconds >
+                          0
+                      ? duration
+                          .inSeconds
+                          .toDouble()
+                      : 1,
+                  value: position
+                      .inSeconds
+                      .toDouble()
+                      .clamp(
+                        0,
+                        duration
+                                    .inSeconds >
+                                0
+                            ? duration
+                                .inSeconds
+                                .toDouble()
+                            : 1,
+                      ),
+                  onChanged:
+                      (value) async {
+                    await player.seek(
+                      Duration(
+                        seconds:
+                            value.toInt(),
+                      ),
+                    );
+                  },
+                ),
+
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(
+                    horizontal: 20,
+                  ),
+                  child: Row(
+                    mainAxisAlignment:
+                        MainAxisAlignment
+                            .spaceBetween,
+                    children: [
+                      Text(
+                        formatTime(
+                          position,
+                        ),
+                      ),
+                      Text(
+                        formatTime(
+                          duration,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 10),
+
+                Row(
+                  mainAxisAlignment:
+                      MainAxisAlignment
+                          .center,
+                  children: [
+                    IconButton(
+                      iconSize: 55,
+                      onPressed:
+                          playPrevious,
+                      icon: const Icon(
+                        Icons
+                            .skip_previous,
+                      ),
                     ),
-                    title: Text(name),
-                    onTap: () {
-                      playSong(item.path);
-                    },
-                  );
-                } else {
-                  return const SizedBox.shrink();
-                }
-              },
+
+                    IconButton(
+                      iconSize: 85,
+                      onPressed: () {
+                        if (currentIndex ==
+                                -1 &&
+                            songs
+                                .isNotEmpty) {
+                          playSong(0);
+                        } else if (isPlaying) {
+                          pauseSong();
+                        } else {
+                          resumeSong();
+                        }
+                      },
+                      icon: Icon(
+                        isPlaying
+                            ? Icons
+                                .pause_circle
+                            : Icons
+                                .play_circle,
+                      ),
+                    ),
+
+                    IconButton(
+                      iconSize: 55,
+                      onPressed:
+                          playNext,
+                      icon: const Icon(
+                        Icons.skip_next,
+                      ),
+                    ),
+                  ],
+                ),
+
+                const Divider(),
+
+                Expanded(
+                  child: songs.isEmpty
+                      ? const Center(
+                          child: Text(
+                            "No MP3 files found",
+                          ),
+                        )
+                      : ListView.builder(
+                          itemCount:
+                              songs.length,
+                          itemBuilder:
+                              (context,
+                                  index) {
+                            String name =
+                                songs[index]
+                                    .path
+                                    .split('/')
+                                    .last;
+
+                            bool selected =
+                                currentIndex ==
+                                    index;
+
+                            return ListTile(
+                              leading: Icon(
+                                selected
+                                    ? Icons
+                                        .equalizer
+                                    : Icons
+                                        .music_note,
+                                color:
+                                    selected
+                                        ? Colors
+                                            .green
+                                        : Colors
+                                            .white,
+                              ),
+                              title: Text(
+                                name,
+                                maxLines: 1,
+                                overflow:
+                                    TextOverflow
+                                        .ellipsis,
+                              ),
+                              selected:
+                                  selected,
+                              onTap: () {
+                                playSong(
+                                  index,
+                                );
+                              },
+                            );
+                          },
+                        ),
+                ),
+              ],
             ),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        child: const Icon(Icons.arrow_back),
-        onPressed: () {
-          if (currentDir.path != '/storage/emulated/0/') {
-            loadFiles(currentDir.parent);
-          }
-        },
-      ),
     );
   }
 }
