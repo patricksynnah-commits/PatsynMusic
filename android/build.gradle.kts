@@ -22,3 +22,12 @@ subprojects {
 tasks.register<Delete>("clean") {
     delete(rootProject.layout.buildDirectory)
 }
+subprojects {
+    afterEvaluate {
+        extensions.findByName("android")?.let {
+            if (it is com.android.build.gradle.LibraryExtension) {
+                it.namespace = "com.example.temp"
+            }
+        }
+    }
+}
